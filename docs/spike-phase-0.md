@@ -30,7 +30,7 @@ results.
 - [ ] **Node 20/22/24 LTS on this machine.** No `node`/`npx` is on the PATH in
       the current shell; install with nvm-windows (`nvm install 24`).
 - [ ] A **spike workspace** on a Fabric capacity, in a region with Fabric Apps,
-      e.g. `fabric-app-cicd-spike`. Empty. Disposable.
+      e.g. `fabric-apps-cicd-spike`. Empty. Disposable.
 - [ ] A **service principal** (the one of `pyfabricops-template` works) with
       **Contributor** on the spike workspace. Admin only if T2 fails on Contributor.
 - [ ] Tenant settings: *Fabric Apps (preview)* enabled, and *Service principals
