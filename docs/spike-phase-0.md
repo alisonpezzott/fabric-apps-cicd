@@ -210,3 +210,24 @@ Delete the spike workspace items (or the workspace) in the portal.
   then restore a `.deployments.json` from a secret store before each run.
 - T8 fails → the prod item must be created by a user and only redeployed by
   the SP. Retest T3b on a user-created item.
+
+## Phase 1 findings (2026-11-16)
+
+- **Only the owner of an AppBackend can deploy to it.** A workspace admin
+  running `rayfin up` as a user against the SP-owned dev app got
+  `403 Forbidden: Only AppBackend artifact owner can perform this operation`.
+  Workspace roles do not help; ownership decides who deploys.
+- **One service principal per environment.** The dev SP owns the dev app and
+  its secret lives on developer machines. The prod SP is Contributor of the
+  prod workspace only, owns the prod app, and its secret lives only in the
+  GitHub environment `prod`. The dev SP has no access to prod, so nobody can
+  deploy prod from a laptop: only a merge to `main` does.
+- **Changing the owner means recreating the app.** Deleting an AppBackend
+  sends it to the workspace recycle bin, with its SQL database, and the name
+  stays taken: `rayfin up` fails with `409 Conflict: An item with the name
+  app-dre-sankey of type AppBackend already exists`. Delete it permanently
+  from the recycle bin before redeploying. Restoring it would bring back the
+  old owner. The SQL data of the app is lost.
+- **No approval step.** Required reviewers on the `prod` environment were
+  tried and dropped: the gate is the pull request (`main` protected, CI
+  check required, admins included), and the merge deploys.
