@@ -5,12 +5,12 @@
 
 name: CI
 
+# Runs on every pull request, with no paths filter: "check" is a required
+# status on main, and a skipped workflow never reports it, which would
+# leave a docs-only pull request blocked.
 on:
   pull_request:
     branches: [main]
-    paths:
-      - app-dre-sankey/**
-      - .github/workflows/**
 
 permissions:
   contents: read
