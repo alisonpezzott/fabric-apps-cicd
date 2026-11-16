@@ -1,9 +1,10 @@
 # CD: deploys app-dre-sankey to prod when main changes. Dev is not deployed
 # here: the developer deploys it with `npx rayfin up` from their machine.
 #
-# GitHub environment "prod" (Settings > Environments), with required
-# reviewers so that each deployment waits for an approval, and these secrets
-# (IDs are secrets too, so the logs mask them):
+# The gate is the pull request: main only takes merges with the CI green,
+# and a merge deploys without a further approval. GitHub environment "prod"
+# (Settings > Environments) only allows main, and holds these secrets (IDs
+# are secrets too, so the logs mask them):
 #   FAB_TENANT_ID, FAB_CLIENT_ID, FAB_CLIENT_SECRET   service principal, Contributor of the workspace
 #   WORKSPACE_ID                                       workspace of the app (fabric-apps-cicd-prod)
 #   MODEL_WORKSPACE_ID, MODEL_ITEM_ID                  dre-sankey the app reads
