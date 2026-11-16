@@ -29,7 +29,7 @@ python scripts/deploy_app.py              pull request ──► CI: lint, types
 
 ```text
 .
-├── app/                              your Fabric App (a Rayfin project); ships a sample
+├── app/                              your Fabric App (a Rayfin project); empty in the template
 ├── environments/dev.yml              dev: workspace, app name, semantic models; no branch
 ├── environments/prod.yml             prod: the same, deployed from main
 ├── scripts/deploy_app.py             looks names up, binds the models, rayfin up, checks
@@ -39,7 +39,6 @@ python scripts/deploy_app.py              pull request ──► CI: lint, types
 ├── .github/workflows/deploy.yml      GitHub: deploys when a branch of an environment changes
 ├── azure-pipelines/ci.yml            Azure DevOps: the same checks
 ├── azure-pipelines/deploy.yml        Azure DevOps: the same deployment
-├── docs/spike-phase-0.md             how each behaviour below was proven
 └── .env.example                      the credentials of dev, for your machine
 ```
 
@@ -105,16 +104,22 @@ Nothing it prints holds an ID: the logs of a public repository are public.
 
 ### 2. Put your app in `app/`
 
-`app/` ships a sample, the DRE Sankey app with write-back (synthetic data),
-so that the pipelines run from the first commit. Replace its content with
-your Rayfin project: `app/package.json` and `app/rayfin/rayfin.yml` must be
-there. The pipelines run these scripts of `app/package.json`; rename them
-in `ci.yml` if yours differ:
+`app/` holds only a README in the template. Until `app/package.json`
+exists, CI checks only the environments and the scripts, and the deploy
+pipeline deploys nothing. Put your Rayfin project there, its own
+`.gitignore` included: a new one
+(`npm create @microsoft/rayfin@latest -- my-app --template blankapp`,
+then move its content into `app/`) or an existing one. `app/package.json`
+and `app/rayfin/rayfin.yml` must be there.
+
+The pipelines run these scripts of `app/package.json`; change the steps of
+`ci.yml` and `deploy.yml` if yours differ:
 
 | Script | Used by | In the `dataapp` template |
 | :--- | :--- | :--- |
 | `npm run lint` | CI (not blocking) | yes |
-| `npm test` | CI and CD | add [Vitest](https://vitest.dev) or remove the step |
+| `npx tsc -b` | CI | yes (`tsconfig.json`) |
+| `npm test` | CI and CD | yes; its `scripts/validate-visual.spec.mjs` fails as shipped, so exclude it: `npm test -- --exclude scripts/validate-visual.spec.mjs` |
 | `npm run build:fabric` | CI; `rayfin up` runs `staticHosting.buildCommand` | yes |
 
 `rayfin/rayfin.yml` needs `services.auth.fabric.enabled: true`: password
@@ -290,12 +295,3 @@ and deploy again with the new identity. Its SQL data is lost.
   by the lookups of the script.
 - The developers of dev share one service principal: the Fabric audit log
   shows the service principal, not who ran the deployment.
-
-## The sample app
-
-`app/` holds a Fabric App over a synthetic company (Blacksmith): its income
-statement as a Sankey from revenue to profit, KPIs, trend and a write-back
-of what-if simulations to the app's SQL database. Its semantic model,
-`dre-sankey`, is published from
-[fabric-app-dre-sankey](https://github.com/alisonpezzott/fabric-app-dre-sankey).
-All data is synthetic.

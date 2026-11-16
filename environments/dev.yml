@@ -6,14 +6,15 @@
 # this file needs no ID of the tenant.
 
 # The workspace of the app.
-workspace: fabric-app-dre-sankey-write-back
+workspace: my-app-dev
 
 # The Fabric App item. The same name in every environment is simplest.
-item: app-dre-sankey
+item: my-app
 
-# The semantic models the app reads, by the alias the app code uses
-# (getFabricClient().semanticModel("<alias>")), each the name or ID of a
-# model in the workspace above. A model of another workspace:
-#   modelo_dre: { workspace: <workspace>, model: <model> }
+# The semantic models the app reads through @microsoft/fabric-app-data, by
+# the alias the app code uses (getFabricClient().semanticModel("<alias>")),
+# each the name or ID of a model of the workspace above. Leave it empty for
+# an app that reads none.
 semanticModels:
-  modelo_dre: dre-sankey
+#  sales: Sales Model
+#  finance: { workspace: shared-models, model: Finance }   # another workspace
