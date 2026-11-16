@@ -47,10 +47,10 @@ steps:
       echo "App in app/: $present"
     displayName: App in app/
 
-  - task: NodeTool@0
+  - task: UseNode@1
     condition: and(succeeded(), eq(variables.appPresent, 'true'))
     inputs:
-      versionSpec: "24.x"
+      version: "24.x"
 
   - script: npm ci --prefix app
     displayName: Install the app

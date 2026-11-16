@@ -113,9 +113,9 @@ stages:
                       inputs:
                         versionSpec: "3.13"
 
-                    - task: NodeTool@0
+                    - task: UseNode@1
                       inputs:
-                        versionSpec: "24.x"
+                        version: "24.x"
 
                     - script: |
                         pip install -r scripts/requirements.txt
