@@ -39,7 +39,8 @@ python scripts/deploy_app.py              pull request ──► CI: lint, types
 ├── .github/workflows/deploy.yml      GitHub: deploys when a branch of an environment changes
 ├── azure-pipelines/ci.yml            Azure DevOps: the same checks
 ├── azure-pipelines/deploy.yml        Azure DevOps: the same deployment
-└── .env.example                      the credentials of dev, for your machine
+├── .env.example                      the credentials of dev, for your machine
+└── .python-version                   Python 3.13, the version of the pipelines
 ```
 
 | Environment | File | Deployed by | Identity | Secret lives in |
@@ -180,14 +181,37 @@ plus their name in `azure-pipelines/deploy.yml`.
 
 ### 6. Deploy dev from your machine
 
-Node.js 20, 22 or 24 (LTS) and Python 3.10 or later. Copy `.env.example` to
-`.env` with the service principal of **dev**, then:
+Node.js 20, 22 or 24 (LTS) and Python 3.13, the version the pipelines use
+and the one `.python-version` pins. Newer Python releases can lack wheels
+for the dependencies, and `pip` then tries to compile them. Copy
+`.env.example` to `.env` with the service principal of **dev**, then
+install the scripts in a virtual environment, with `uv`:
 
 ```bash
-pip install -r scripts/requirements.txt
-npm ci --prefix app
-python scripts/deploy_app.py --environment dev
+uv venv --python 3.13 .venv
+uv pip install --python .venv -r scripts/requirements.txt
 ```
+
+or with `venv` and `pip`:
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -r scripts/requirements.txt   # Windows
+.venv/bin/python -m pip install -r scripts/requirements.txt       # Linux, macOS
+```
+
+A Python installed by `uv` has no `pip` command on the PATH: use
+`uv pip`, or `python -m pip` inside the virtual environment. Then:
+
+```bash
+npm ci --prefix app
+.venv/Scripts/python scripts/deploy_app.py --environment dev      # Windows
+.venv/bin/python scripts/deploy_app.py --environment dev          # Linux, macOS
+```
+
+`npm ci` may report install scripts it did not run (`esbuild`, `keytar`,
+...): recent npm releases block them by default, and the deployment works
+without them.
 
 The first deployment creates the app, owned by the service principal of
 dev. Open it from the workspace, in the Fabric portal. Apps bound to a
@@ -279,6 +303,9 @@ and deploy again with the new identity. Its SQL data is lost.
 | `Workspace ... not found, or the service principal is not a member of it` | Wrong name, missing role, or tenant setting off | Check the name, the Contributor role and *Service principals can use Fabric APIs* |
 | `... would result in data loss but force mode is not enabled` | A schema change drops data | Review it, then deploy with force (above) |
 | The app opens but its queries fail | Wrong model, or the user lacks Build and Read on it | Check `semanticModels` and the permissions of the users |
+| `pip: command not found` | Python installed by `uv`, which puts no `pip` on the PATH | Use `uv pip`, or `python -m pip` inside `.venv` (step 6) |
+| `Microsoft Visual C++ 14.0 or greater is required` while installing `pyyaml` | A Python release with no wheel for it yet | Use Python 3.13, as `.python-version` pins (step 6) |
+| `Cannot spy on export ... Module namespace is not configurable in ESM` in `npm test` | A test of the app runs `vi.spyOn` on an ES module export, which Vitest 4 forbids | Mock the module with `vi.mock(path, importOriginal)`, wrap the export in `vi.fn(actual.fn)`, and override it with `vi.mocked(fn).mockResolvedValueOnce(...)` |
 
 `rayfin up` writes detailed logs to `~/.rayfin/logs/`, also on failure.
 
