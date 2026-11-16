@@ -204,14 +204,9 @@ A Python installed by `uv` has no `pip` command on the PATH: use
 `uv pip`, or `python -m pip` inside the virtual environment. Then:
 
 ```bash
-npm ci --prefix app
 .venv/Scripts/python scripts/deploy_app.py --environment dev      # Windows
 .venv/bin/python scripts/deploy_app.py --environment dev          # Linux, macOS
 ```
-
-`npm ci` may report install scripts it did not run (`esbuild`, `keytar`,
-...): recent npm releases block them by default, and the deployment works
-without them.
 
 The first deployment creates the app, owned by the service principal of
 dev. Open it from the workspace, in the Fabric portal. Apps bound to a
