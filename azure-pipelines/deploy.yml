@@ -75,6 +75,11 @@ stages:
 
           - script: |
               name=$(python scripts/environments.py --branch "$(Build.SourceBranch)")
+              # No app in app/ yet, as in the template itself: nothing to deploy.
+              if [ ! -f app/package.json ]; then
+                echo "No app in app/ (app/package.json): nothing to deploy."
+                name=""
+              fi
               echo "##vso[task.setvariable variable=name;isOutput=true]$name"
               echo "Branch $(Build.SourceBranch) deploys to: ${name:-nothing}"
             name: Resolve
@@ -127,7 +132,7 @@ stages:
                         FAB_CLIENT_ID: $(FAB-CLIENT-ID)
                         FAB_CLIENT_SECRET: $(FAB-CLIENT-SECRET)
 
-                    - script: npm test -- --exclude scripts/validate-visual.spec.mjs
+                    - script: npm test
                       displayName: Test
                       workingDirectory: app
 

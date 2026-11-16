@@ -14,9 +14,9 @@
 # branches "main" only. The gate is the pull request: protect main with
 # the "check" status of ci.yml.
 #
-# What a run does is in scripts/deploy_app.py. Proven in docs/spike-phase-0.md:
-# with no rayfin/.deployments.json, --yes reuses the item of the same name;
-# a schema change that loses data fails unless run by hand with force.
+# What a run does is in scripts/deploy_app.py: with no
+# rayfin/.deployments.json, --yes reuses the item of the same name; a schema
+# change that loses data fails unless run by hand with force.
 
 name: Deploy
 
@@ -56,6 +56,11 @@ jobs:
         id: branch
         run: |
           name=$(python scripts/environments.py --branch "$GITHUB_REF_NAME")
+          # No app in app/ yet, as in the template itself: nothing to deploy.
+          if [ ! -f app/package.json ]; then
+            echo "No app in app/ (app/package.json): nothing to deploy."
+            name=""
+          fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "Branch $GITHUB_REF_NAME deploys to: ${name:-nothing}"
 
@@ -101,7 +106,7 @@ jobs:
 
       - name: Test
         working-directory: app
-        run: npm test -- --exclude scripts/validate-visual.spec.mjs
+        run: npm test
 
       - name: Deploy
         run: python scripts/deploy_app.py --environment "$ENVIRONMENT" $FORCE
