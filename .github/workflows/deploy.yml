@@ -1,0 +1,112 @@
+# CD: deploys app-dre-sankey to prod when main changes. Dev is not deployed
+# here: the developer deploys it with `npx rayfin up` from their machine.
+#
+# GitHub environment "prod" (Settings > Environments), with required
+# reviewers so that each deployment waits for an approval, and these secrets
+# (IDs are secrets too, so the logs mask them):
+#   FAB_TENANT_ID, FAB_CLIENT_ID, FAB_CLIENT_SECRET   service principal, Contributor of the workspace
+#   WORKSPACE_ID                                       workspace of the app (fabric-apps-cicd-prod)
+#   MODEL_WORKSPACE_ID, MODEL_ITEM_ID                  dre-sankey the app reads
+#
+# Behaviour proven in docs/spike-phase-0.md:
+# - With no rayfin/.deployments.json, `--yes` reuses the item of the same
+#   name instead of creating a second one.
+# - Hosted runners have no OS keychain: RAYFIN_ENCRYPTION_FALLBACK_ENABLED.
+# - A schema change that drops data fails the deployment unless the run is
+#   started by hand with force = true. Rayfin posts the settings before the
+#   schema step, so a refused run leaves prod with new settings and the old
+#   bundle: fix forward with a new pull request.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - app-dre-sankey/**
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Allow destructive schema changes (data loss). Review the failed run first.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  ITEM_NAME: app-dre-sankey
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: app-dre-sankey
+    env:
+      RAYFIN_ENCRYPTION_FALLBACK_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app-dre-sankey/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Check IDs
+        env:
+          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+          MODEL_WORKSPACE_ID: ${{ secrets.MODEL_WORKSPACE_ID }}
+          MODEL_ITEM_ID: ${{ secrets.MODEL_ITEM_ID }}
+        run: |
+          guid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          for name in WORKSPACE_ID MODEL_WORKSPACE_ID MODEL_ITEM_ID; do
+            if [[ ! "${!name}" =~ $guid ]]; then echo "::error::$name is missing or not a GUID"; exit 1; fi
+          done
+
+      - name: Bind the semantic model of prod
+        env:
+          MODEL_WORKSPACE_ID: ${{ secrets.MODEL_WORKSPACE_ID }}
+          MODEL_ITEM_ID: ${{ secrets.MODEL_ITEM_ID }}
+        run: |
+          npx fabric-app-data init
+          npx fabric-app-data add semanticModel modelo_dre -w "$MODEL_WORKSPACE_ID" -i "$MODEL_ITEM_ID" -p prod
+          npx fabric-app-data use prod -o src/fabric.generated.ts
+
+      - name: Test
+        run: npm test -- --exclude scripts/validate-visual.spec.mjs
+
+      - name: Sign in as service principal
+        env:
+          FAB_TENANT_ID: ${{ secrets.FAB_TENANT_ID }}
+          FAB_CLIENT_ID: ${{ secrets.FAB_CLIENT_ID }}
+          FAB_CLIENT_SECRET: ${{ secrets.FAB_CLIENT_SECRET }}
+        run: |
+          npx rayfin login --service-principal \
+            --client-id "$FAB_CLIENT_ID" --client-secret "$FAB_CLIENT_SECRET" --tenant "$FAB_TENANT_ID"
+
+      # `rayfin up` runs the build (staticHosting.buildCommand), applies the
+      # schema and uploads the bundle.
+      - name: Deploy
+        env:
+          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+          FORCE: ${{ inputs.force && '--force' || '' }}
+        run: |
+          npx rayfin up --workspace-id "$WORKSPACE_ID" --item-name "$ITEM_NAME" --yes $FORCE --output json > up.json || {
+            jq -r '.error // empty' up.json; exit 1; }
+          jq '{status, item: .deployment.itemName, warnings}' up.json
+
+      - name: Check the deployment
+        run: |
+          npx rayfin up status --json > status.json || true
+          jq '.endpointHealth | {reachable, httpStatus, authenticated, errorCode}' status.json
+          [ "$(jq -r '.endpointHealth.httpStatus' status.json)" = "200" ]
