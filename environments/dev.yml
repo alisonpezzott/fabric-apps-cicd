@@ -1,0 +1,19 @@
+# Development: deployed from the developer's machine, never by a pipeline
+# (no branch key), with the service principal of dev in .env:
+#   python scripts/deploy_app.py --environment dev
+#
+# Names or IDs: the script looks names up with the service principal, so
+# this file needs no ID of the tenant.
+
+# The workspace of the app.
+workspace: fabric-app-dre-sankey-write-back
+
+# The Fabric App item. The same name in every environment is simplest.
+item: app-dre-sankey
+
+# The semantic models the app reads, by the alias the app code uses
+# (getFabricClient().semanticModel("<alias>")), each the name or ID of a
+# model in the workspace above. A model of another workspace:
+#   modelo_dre: { workspace: <workspace>, model: <model> }
+semanticModels:
+  modelo_dre: dre-sankey

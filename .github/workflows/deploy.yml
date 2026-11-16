@@ -1,113 +1,112 @@
-# CD: deploys app-dre-sankey to prod when main changes. Dev is not deployed
-# here: the developer deploys it with `npx rayfin up` from their machine.
+# CD: deploys app/ when a branch of an environment changes: the branch key
+# of each file of environments/ says which branch deploys to it, such as
+# main to prod. A first job asks scripts/environments.py which environment
+# the branch deploys to, and the deployment runs in the GitHub environment
+# of that name. A push to a branch of no environment deploys nothing. An
+# environment with no branch, dev by default, is deployed from the
+# developer's machine only.
 #
-# The gate is the pull request: main only takes merges with the CI green,
-# and a merge deploys without a further approval. GitHub environment "prod"
-# (Settings > Environments) only allows main, and holds these secrets (IDs
-# are secrets too, so the logs mask them):
-#   FAB_TENANT_ID, FAB_CLIENT_ID, FAB_CLIENT_SECRET   service principal, Contributor of the workspace
-#   WORKSPACE_ID                                       workspace of the app (fabric-apps-cicd-prod)
-#   MODEL_WORKSPACE_ID, MODEL_ITEM_ID                  dre-sankey the app reads
+# Before the first run, one GitHub environment (Settings > Environments) per
+# deployed environment, of the same name, such as "prod", with the secrets
+# FAB_TENANT_ID, FAB_CLIENT_ID and FAB_CLIENT_SECRET of the service
+# principal of that environment: a Contributor of its workspace and the
+# owner of its app (the first deployment makes it the owner). Deployment
+# branches "main" only. The gate is the pull request: protect main with
+# the "check" status of ci.yml.
 #
-# Behaviour proven in docs/spike-phase-0.md:
-# - With no rayfin/.deployments.json, `--yes` reuses the item of the same
-#   name instead of creating a second one.
-# - Hosted runners have no OS keychain: RAYFIN_ENCRYPTION_FALLBACK_ENABLED.
-# - A schema change that drops data fails the deployment unless the run is
-#   started by hand with force = true. Rayfin posts the settings before the
-#   schema step, so a refused run leaves prod with new settings and the old
-#   bundle: fix forward with a new pull request.
+# What a run does is in scripts/deploy_app.py. Proven in docs/spike-phase-0.md:
+# with no rayfin/.deployments.json, --yes reuses the item of the same name;
+# a schema change that loses data fails unless run by hand with force.
 
 name: Deploy
 
 on:
   push:
-    branches: [main]
     paths:
-      - app-dre-sankey/**
+      - app/**
+      - environments/**
+      - scripts/**
       - .github/workflows/deploy.yml
   workflow_dispatch:
     inputs:
       force:
-        description: Allow destructive schema changes (data loss). Review the failed run first.
+        description: Allow schema changes that lose data (rayfin up --force). Review the failed run first.
         type: boolean
         default: false
 
 permissions:
   contents: read
 
-env:
-  ITEM_NAME: app-dre-sankey
-
 jobs:
-  deploy:
+  environment:
     runs-on: ubuntu-latest
-    environment: prod
+    outputs:
+      name: ${{ steps.branch.outputs.name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install PyYAML
+        run: pip install "pyyaml>=6,<7"
+
+      - name: Environment of the branch
+        id: branch
+        run: |
+          name=$(python scripts/environments.py --branch "$GITHUB_REF_NAME")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Branch $GITHUB_REF_NAME deploys to: ${name:-nothing}"
+
+  deploy:
+    needs: environment
+    if: needs.environment.outputs.name != ''
+    runs-on: ubuntu-latest
+    environment: ${{ needs.environment.outputs.name }}
+    # One deployment at a time per environment.
     concurrency:
-      group: deploy-prod
+      group: deploy-${{ needs.environment.outputs.name }}
       cancel-in-progress: false
-    defaults:
-      run:
-        working-directory: app-dre-sankey
     env:
+      ENVIRONMENT: ${{ needs.environment.outputs.name }}
+      # Hosted runners have no OS keychain for the Rayfin token cache.
       RAYFIN_ENCRYPTION_FALLBACK_ENABLED: "true"
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
 
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: app-dre-sankey/package-lock.json
+          cache-dependency-path: app/package-lock.json
 
       - name: Install
-        run: npm ci
-
-      - name: Check IDs
-        env:
-          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
-          MODEL_WORKSPACE_ID: ${{ secrets.MODEL_WORKSPACE_ID }}
-          MODEL_ITEM_ID: ${{ secrets.MODEL_ITEM_ID }}
         run: |
-          guid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-          for name in WORKSPACE_ID MODEL_WORKSPACE_ID MODEL_ITEM_ID; do
-            if [[ ! "${!name}" =~ $guid ]]; then echo "::error::$name is missing or not a GUID"; exit 1; fi
-          done
+          pip install -r scripts/requirements.txt
+          npm ci --prefix app
 
-      - name: Bind the semantic model of prod
-        env:
-          MODEL_WORKSPACE_ID: ${{ secrets.MODEL_WORKSPACE_ID }}
-          MODEL_ITEM_ID: ${{ secrets.MODEL_ITEM_ID }}
-        run: |
-          npx fabric-app-data init
-          npx fabric-app-data add semanticModel modelo_dre -w "$MODEL_WORKSPACE_ID" -i "$MODEL_ITEM_ID" -p prod
-          npx fabric-app-data use prod -o src/fabric.generated.ts
-
-      - name: Test
-        run: npm test -- --exclude scripts/validate-visual.spec.mjs
-
-      - name: Sign in as service principal
+      - name: Bind the semantic models of the environment
+        run: python scripts/deploy_app.py --environment "$ENVIRONMENT" --bind-only
         env:
           FAB_TENANT_ID: ${{ secrets.FAB_TENANT_ID }}
           FAB_CLIENT_ID: ${{ secrets.FAB_CLIENT_ID }}
           FAB_CLIENT_SECRET: ${{ secrets.FAB_CLIENT_SECRET }}
-        run: |
-          npx rayfin login --service-principal \
-            --client-id "$FAB_CLIENT_ID" --client-secret "$FAB_CLIENT_SECRET" --tenant "$FAB_TENANT_ID"
 
-      # `rayfin up` runs the build (staticHosting.buildCommand), applies the
-      # schema and uploads the bundle.
+      - name: Test
+        working-directory: app
+        run: npm test -- --exclude scripts/validate-visual.spec.mjs
+
       - name: Deploy
+        run: python scripts/deploy_app.py --environment "$ENVIRONMENT" $FORCE
         env:
-          WORKSPACE_ID: ${{ secrets.WORKSPACE_ID }}
+          FAB_TENANT_ID: ${{ secrets.FAB_TENANT_ID }}
+          FAB_CLIENT_ID: ${{ secrets.FAB_CLIENT_ID }}
+          FAB_CLIENT_SECRET: ${{ secrets.FAB_CLIENT_SECRET }}
           FORCE: ${{ inputs.force && '--force' || '' }}
-        run: |
-          npx rayfin up --workspace-id "$WORKSPACE_ID" --item-name "$ITEM_NAME" --yes $FORCE --output json > up.json || {
-            jq -r '.error // empty' up.json; exit 1; }
-          jq '{status, item: .deployment.itemName, warnings}' up.json
-
-      - name: Check the deployment
-        run: |
-          npx rayfin up status --json > status.json || true
-          jq '.endpointHealth | {reachable, httpStatus, authenticated, errorCode}' status.json
-          [ "$(jq -r '.endpointHealth.httpStatus' status.json)" = "200" ]
