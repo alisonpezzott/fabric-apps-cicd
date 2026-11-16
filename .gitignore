@@ -1,13 +1,7 @@
-# Power BI
-*.pbix
-*.pbit
-.pbi/
-localSettings.json
-*.pbip.lock
-cache.abf
-
-# segredos locais: o projeto não usa .env, mas nenhum deve ser versionado
+# Credentials: only .env.example is committed
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -15,9 +9,11 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# Node (Fase 4)
+# Node
 node_modules/
 
 # Cache
 .cache/
 
+# The app keeps its own .gitignore in app/ (fabric.yaml, rayfin/.env,
+# rayfin/.deployments.json, dist, src/fabric.generated.ts).

@@ -1,0 +1,142 @@
+# CD: deploys app/ when a branch of an environment changes: the branch key
+# of each file of environments/ says which branch deploys to it, such as
+# main to prod. A first stage asks scripts/environments.py which environment
+# the branch deploys to, and only the stage of that environment runs; the
+# others are skipped, and so is every deployment stage on a branch of no
+# environment. An environment with no branch, dev by default, is deployed
+# from the developer's machine only, so it is not listed below.
+#
+# Azure DevOps needs the environment of a deployment job when the pipeline
+# is compiled, before any file is read, so the environments parameter below
+# lists the environments this pipeline deploys: files of environments/ with
+# a branch, by the same names. To add one, add its file and its name there.
+#
+# Before the first run, for each name of the parameter, such as "prod":
+# - A variable group "fabric-<name>" (Pipelines > Library) with
+#   FAB-TENANT-ID, FAB-CLIENT-ID and FAB-CLIENT-SECRET, this one a secret,
+#   of the service principal of that environment: a Contributor of its
+#   workspace and the owner of its app (the first deployment makes it the
+#   owner). One service principal per environment, as only the owner of a
+#   Fabric App can deploy to it.
+# - An environment (Pipelines > Environments) of that name, with an
+#   Exclusive Lock check, so that one deployment runs at a time. Add an
+#   approval only if a deployment should wait for one: the gate here is
+#   the pull request to the branch.
+# - This pipeline allowed to use the variable group and the environment
+#   (Pipeline permissions of each), or a Permit on its first run.
+# - The pipeline itself: Pipelines > New pipeline > Existing Azure
+#   Pipelines YAML file, this one.
+#
+# To allow a schema change that loses data, run the pipeline by hand on the
+# branch with "Allow schema changes that lose data" checked.
+
+parameters:
+  - name: environments
+    displayName: The environments this pipeline deploys
+    type: object
+    default:
+      - prod
+  - name: force
+    displayName: Allow schema changes that lose data (rayfin up --force)
+    type: boolean
+    default: false
+
+# Any branch: environments/ says which ones deploy.
+trigger:
+  branches:
+    include:
+      - "*"
+  paths:
+    include:
+      - app
+      - environments
+      - scripts
+      - azure-pipelines/deploy.yml
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Environment
+    displayName: Environment of the branch
+    jobs:
+      - job: Branch
+        steps:
+          - checkout: self
+
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: "3.13"
+
+          - script: pip install "pyyaml>=6,<7"
+            displayName: Install PyYAML
+
+          - script: |
+              name=$(python scripts/environments.py --branch "$(Build.SourceBranch)")
+              echo "##vso[task.setvariable variable=name;isOutput=true]$name"
+              echo "Branch $(Build.SourceBranch) deploys to: ${name:-nothing}"
+            name: Resolve
+            displayName: Environment of the branch
+
+  - ${{ each environment in parameters.environments }}:
+      - stage: Deploy_${{ replace(environment, '-', '_') }}
+        displayName: Deploy to ${{ environment }}
+        dependsOn: Environment
+        condition: >
+          and(succeeded(),
+          eq(dependencies.Environment.outputs['Branch.Resolve.name'],
+          '${{ environment }}'))
+        variables:
+          - group: fabric-${{ environment }}
+          # Hosted agents have no OS keychain for the Rayfin token cache.
+          - name: RAYFIN_ENCRYPTION_FALLBACK_ENABLED
+            value: "true"
+        jobs:
+          - deployment: Deploy
+            displayName: Deploy to ${{ environment }}
+            environment: ${{ environment }}
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    # A deployment job checks out nothing unless asked.
+                    - checkout: self
+
+                    - task: UsePythonVersion@0
+                      inputs:
+                        versionSpec: "3.13"
+
+                    - task: NodeTool@0
+                      inputs:
+                        versionSpec: "24.x"
+
+                    - script: |
+                        pip install -r scripts/requirements.txt
+                        npm ci --prefix app
+                      displayName: Install
+
+                    - script: >
+                        python scripts/deploy_app.py
+                        --environment ${{ environment }} --bind-only
+                      displayName: Bind the semantic models of the environment
+                      env:
+                        # Secret variables reach a script only when mapped.
+                        FAB_TENANT_ID: $(FAB-TENANT-ID)
+                        FAB_CLIENT_ID: $(FAB-CLIENT-ID)
+                        FAB_CLIENT_SECRET: $(FAB-CLIENT-SECRET)
+
+                    - script: npm test -- --exclude scripts/validate-visual.spec.mjs
+                      displayName: Test
+                      workingDirectory: app
+
+                    - script: >
+                        python scripts/deploy_app.py
+                        --environment ${{ environment }}
+                        ${{ iif(parameters.force, '--force', '') }}
+                      displayName: Deploy
+                      env:
+                        FAB_TENANT_ID: $(FAB-TENANT-ID)
+                        FAB_CLIENT_ID: $(FAB-CLIENT-ID)
+                        FAB_CLIENT_SECRET: $(FAB-CLIENT-SECRET)
