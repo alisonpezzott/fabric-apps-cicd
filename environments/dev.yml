@@ -1,0 +1,20 @@
+# Development: deployed from the developer's machine, never by a pipeline
+# (no branch key), with the service principal of dev in .env:
+#   python scripts/deploy_app.py --environment dev
+#
+# Names or IDs: the script looks names up with the service principal, so
+# this file needs no ID of the tenant.
+
+# The workspace of the app.
+workspace: my-app-dev
+
+# The Fabric App item. The same name in every environment is simplest.
+item: my-app
+
+# The semantic models the app reads through @microsoft/fabric-app-data, by
+# the alias the app code uses (getFabricClient().semanticModel("<alias>")),
+# each the name or ID of a model of the workspace above. Leave it empty for
+# an app that reads none.
+semanticModels:
+#  sales: Sales Model
+#  finance: { workspace: shared-models, model: Finance }   # another workspace

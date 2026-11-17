@@ -1,0 +1,11 @@
+# Production: deployed by the pipeline when main changes, with the service
+# principal of prod, whose secret lives only in the pipeline (the GitHub
+# environment "prod", or the Azure DevOps variable group "fabric-prod").
+
+workspace: my-app-prod
+branch: main
+item: my-app
+
+# Same aliases as every other environment: the CI checks it.
+semanticModels:
+#  sales: Sales Model

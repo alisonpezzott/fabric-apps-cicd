@@ -1,0 +1,117 @@
+# CD: deploys app/ when a branch of an environment changes: the branch key
+# of each file of environments/ says which branch deploys to it, such as
+# main to prod. A first job asks scripts/environments.py which environment
+# the branch deploys to, and the deployment runs in the GitHub environment
+# of that name. A push to a branch of no environment deploys nothing. An
+# environment with no branch, dev by default, is deployed from the
+# developer's machine only.
+#
+# Before the first run, one GitHub environment (Settings > Environments) per
+# deployed environment, of the same name, such as "prod", with the secrets
+# FAB_TENANT_ID, FAB_CLIENT_ID and FAB_CLIENT_SECRET of the service
+# principal of that environment: a Contributor of its workspace and the
+# owner of its app (the first deployment makes it the owner). Deployment
+# branches "main" only. The gate is the pull request: protect main with
+# the "check" status of ci.yml.
+#
+# What a run does is in scripts/deploy_app.py: with no
+# rayfin/.deployments.json, --yes reuses the item of the same name; a schema
+# change that loses data fails unless run by hand with force.
+
+name: Deploy
+
+on:
+  push:
+    paths:
+      - app/**
+      - environments/**
+      - scripts/**
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Allow schema changes that lose data (rayfin up --force). Review the failed run first.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  environment:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.branch.outputs.name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install PyYAML
+        run: pip install "pyyaml>=6,<7"
+
+      - name: Environment of the branch
+        id: branch
+        run: |
+          name=$(python scripts/environments.py --branch "$GITHUB_REF_NAME")
+          # No app in app/ yet, as in the template itself: nothing to deploy.
+          if [ ! -f app/package.json ]; then
+            echo "No app in app/ (app/package.json): nothing to deploy."
+            name=""
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Branch $GITHUB_REF_NAME deploys to: ${name:-nothing}"
+
+  deploy:
+    needs: environment
+    if: needs.environment.outputs.name != ''
+    runs-on: ubuntu-latest
+    environment: ${{ needs.environment.outputs.name }}
+    # One deployment at a time per environment.
+    concurrency:
+      group: deploy-${{ needs.environment.outputs.name }}
+      cancel-in-progress: false
+    env:
+      ENVIRONMENT: ${{ needs.environment.outputs.name }}
+      # Hosted runners have no OS keychain for the Rayfin token cache.
+      RAYFIN_ENCRYPTION_FALLBACK_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install
+        run: |
+          pip install -r scripts/requirements.txt
+          npm ci --prefix app
+
+      - name: Bind the semantic models of the environment
+        run: python scripts/deploy_app.py --environment "$ENVIRONMENT" --bind-only
+        env:
+          FAB_TENANT_ID: ${{ secrets.FAB_TENANT_ID }}
+          FAB_CLIENT_ID: ${{ secrets.FAB_CLIENT_ID }}
+          FAB_CLIENT_SECRET: ${{ secrets.FAB_CLIENT_SECRET }}
+
+      - name: Test
+        working-directory: app
+        run: npm test
+
+      - name: Deploy
+        run: python scripts/deploy_app.py --environment "$ENVIRONMENT" $FORCE
+        env:
+          FAB_TENANT_ID: ${{ secrets.FAB_TENANT_ID }}
+          FAB_CLIENT_ID: ${{ secrets.FAB_CLIENT_ID }}
+          FAB_CLIENT_SECRET: ${{ secrets.FAB_CLIENT_SECRET }}
+          FORCE: ${{ inputs.force && '--force' || '' }}

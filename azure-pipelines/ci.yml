@@ -1,0 +1,87 @@
+# CI: checks every pull request. Needs no secret and touches no workspace:
+# the semantic models are bound to placeholder IDs (see scripts/deploy_app.py).
+#
+# The environments and the scripts are always checked. The app steps run
+# only once app/ holds an app (app/package.json).
+#
+# Azure Repos ignores the pr trigger below: there, add this pipeline as a
+# Build Validation policy of main (Project settings > Repositories > the
+# repository > Policies > Branch policies > main). On GitHub repositories
+# built by Azure Pipelines, the pr trigger applies.
+#
+# Create it in Pipelines > New pipeline > Existing Azure Pipelines YAML
+# file, this one.
+
+trigger: none
+
+pr:
+  branches:
+    include:
+      - "*"
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self
+
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.13"
+
+  - script: pip install -r scripts/requirements.txt ruff mypy types-PyYAML
+    displayName: Install the scripts
+
+  - script: python scripts/environments.py --check
+    displayName: Environments
+
+  - script: |
+      ruff check scripts
+      ruff format --check scripts
+      mypy --strict scripts
+    displayName: Scripts (ruff, mypy)
+
+  - script: |
+      if [ -f app/package.json ]; then present=true; else present=false; fi
+      echo "##vso[task.setvariable variable=appPresent]$present"
+      echo "App in app/: $present"
+    displayName: App in app/
+
+  - task: UseNode@1
+    condition: and(succeeded(), eq(variables.appPresent, 'true'))
+    inputs:
+      version: "24.x"
+
+  - script: npm ci --prefix app
+    displayName: Install the app
+    condition: and(succeeded(), eq(variables.appPresent, 'true'))
+
+  # src/fabric.generated.ts is gitignored; tests and build import it.
+  - script: |
+      environment=$(python scripts/environments.py --branch "$(System.PullRequest.TargetBranch)")
+      python scripts/deploy_app.py --environment "${environment:-prod}" --bind-only --placeholder
+    displayName: Bind placeholder semantic models
+    condition: and(succeeded(), eq(variables.appPresent, 'true'))
+
+  # Not blocking: the dataapp template's hook use-semantic-model-query.ts
+  # has a known react-hooks/set-state-in-effect error.
+  - script: npm run lint
+    displayName: Lint
+    workingDirectory: app
+    continueOnError: true
+    condition: and(succeeded(), eq(variables.appPresent, 'true'))
+
+  - script: npx tsc -b
+    displayName: Type check
+    workingDirectory: app
+    condition: and(succeeded(), eq(variables.appPresent, 'true'))
+
+  - script: npm test
+    displayName: Test
+    workingDirectory: app
+    condition: and(succeeded(), eq(variables.appPresent, 'true'))
+
+  - script: npm run build:fabric
+    displayName: Build
+    workingDirectory: app
+    condition: and(succeeded(), eq(variables.appPresent, 'true'))
